@@ -1,0 +1,8 @@
+1) asignar nombre al nodo
+erl -sname name
+
+2) net_adm:ping(nombre del otro nodo) -> retorna ping o pong si es exitosa o no la conexion
+
+3) con nodes() podes fijarte con cuales estas conectado
+
+4) con node() te podes fijar el nombre de tu nodo
