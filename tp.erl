@@ -1,4 +1,7 @@
--module(tp)
+-module(tp).
+-import (aux, [findminload/1, updateloadlist/2]).
+-define(SERVERS, ['nodo1@127.0.0.1','nodo2@127.0.0.1']).
+-define(LOADS, [999, 999]).
 
 %Proposito: cuando un cliente se conecta crea un nuevo hilo (psocket) que atenderá todos los pedidos de ese cliente.
 
@@ -32,17 +35,22 @@ dispatcher(ListenSocket) ->
 psocket(Socket) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Cmd} ->
-            pbalance ! {where, self()};
+            idpbalance ! {self(), where};
             receive
-                {Node} -> %!!!!
+                {Node} -> spawn(Node, ?MODULE, pcomando, []), % Crea el pcomando en el servidor correspondiente
         {error, closed} ->
             io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket]);
 
 
 
-%Proposito: recibe informacion de pstat, indica a psocket en que nodo crear pcomando
-pbalance() ->
-    ok
+%Proposito: recibe informacion de pstat, indica a psocket en que nodo crear pcomando. Primero
+% envia a pcomando despues actualiza la lista.
+
+pbalance(LoadList) ->
+    receive
+        {PidPsocket, where} -> PidPsocket ! findminload(LoadList), pbalance(LoadList);
+        {Node, Load} -> pbalance(updateloadlist(LoadList, {Node, Load})).
+
 
 
 %Proposito: % Funcion que calcula la carga del nodo.
@@ -52,14 +60,14 @@ load() ->
     length(erlang:ports()).
 
 %Proposito: envia la carga de los nodos a pbalance
-
 pstat() ->
-    idpbalance ! [{node(), } || Node <- [node() | nodes()]]
+    [{idpbalance, Node} ! {node(), load()} || Node <- [node() | nodes()]],
     timer:sleep(10000),
     pstat().
 
+
 pcomado() ->
-    ok
+    
 
 %Proposito: crea el ListenSocket e inicializa pstat, pbalance
 
@@ -77,4 +85,4 @@ pcomado() ->
      end,
      spawn(?MODULE, dispatcher, [ListenSocket]),
      spawn(?MODULE, pstat, []),
-     register(idpbalance, spawn(?MODULE, pbalance, [])).
+     register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)])).
