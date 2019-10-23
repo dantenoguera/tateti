@@ -1,5 +1,5 @@
 -module(tp).
--export([init/0]).
+-export([init/0, dispatcher/1]).
 -import (aux, [findminload/1, updateloadlist/2]).
 %-define(SERVERS, ['nodo1@127.0.0.1','nodo2@127.0.0.1']).
 -define(LOADS, [999, 999]).
@@ -19,14 +19,14 @@ load() ->
 %-control de error en gen_tcp:accept(ListenSocket)
 
 dispatcher(ListenSocket) ->
-    %case gen_tcp:accept(ListenSocket) of
-    %    {ok, Socket} ->
-    %        io:format("Nuevo cliente: ~p.~n", [Socket]);
-    %        %spawn(?MODULE, psocket, [Socket]);
-    %    {error, closed} -> io:format("Error ~p cerrado ~n", [ListenSocket])
-    %end,
-    {ok, Socket} = gen_tcp:accept(ListenSocket).
-    %dispatcher(ListenSocket).
+    case gen_tcp:accept(ListenSocket) of
+        {ok, Socket} ->
+            io:format("Hola!"),
+            io:format("Nuevo cliente: ~p ~n", [Socket]),
+            spawn(?MODULE, psocket, [Socket]);
+        {error, closed} -> io:format("Error ~p cerrado ~n", [ListenSocket])
+    end,
+    dispatcher(ListenSocket).
 
 %Proposito: por cada pedido, psocket crea un nuevo proceso (pcomando) que realiza todo cálculo necesario y
 %le devuelva una respuesta a psocket, que le enviará al cliente. Además pcomando
@@ -63,23 +63,17 @@ pcomado(Cmd, PidPsocket) ->
 
 %Proposito: recibe informacion de pstat, indica a psocket en que nodo crear pcomando. Primero
 % envia a pcomando despues actualiza la lista.
-
 pbalance(LoadList) ->
     receive
         {PidPsocket, where} -> PidPsocket ! findminload(LoadList), pbalance(LoadList);
         {Node, Load} -> pbalance(updateloadlist(LoadList, {Node, Load}))
     end.
 
-
-
 %Proposito: envia la carga de los nodos a pbalance
 pstat() ->
     [{idpbalance, Node} ! {node(), load()} || Node <- [node() | nodes()]],
     timer:sleep(10000),
     pstat().
-
-
-
 
 %Proposito: crea el ListenSocket e inicializa pstat, pbalance
 
@@ -91,10 +85,11 @@ pstat() ->
 % se verifica que gen_tcp:listen no tire error.
 
  init() ->
-     case gen_tcp:listen(0, [{active, false}]) of
-         {ok, ListenSocket} ->
+    case gen_tcp:listen(0, [{active, false}]) of
+        {ok, ListenSocket} ->
+            {ok, Port} = inet:port(ListenSocket), % Busca un puerto disponible
             spawn(?MODULE, dispatcher, [ListenSocket]);
             %spawn(?MODULE, pstat, []),
             %register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)]));
-         {error, _} -> io:format("Error al crear ListenSocket~n")
-     end.
+        {error, _} -> io:format("Error al crear ListenSocket~n")
+    end.
