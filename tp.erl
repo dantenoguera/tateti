@@ -1,8 +1,8 @@
 -module(tp).
--export([init/0, dispatcher/1]).
--import (aux, [findminload/1, updateloadlist/2]).
-%-define(SERVERS, ['nodo1@127.0.0.1','nodo2@127.0.0.1']).
--define(LOADS, [999, 999]).
+-export([init/0, dispatcher/1, psocket/1, pstat/0, pbalance/1]).
+-import ('aux', [findminload/1, updateloadlist/2]).
+-define(SERVERS, ['nodoA@127.0.0.1']).
+-define(LOADS, [0]).
 
 %Proposito: % Funcion que calcula la carga del nodo.
 load() ->
@@ -21,12 +21,12 @@ load() ->
 dispatcher(ListenSocket) ->
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
-            io:format("Hola!"),
             io:format("Nuevo cliente: ~p ~n", [Socket]),
             spawn(?MODULE, psocket, [Socket]);
         {error, closed} -> io:format("Error ~p cerrado ~n", [ListenSocket])
     end,
     dispatcher(ListenSocket).
+
 
 %Proposito: por cada pedido, psocket crea un nuevo proceso (pcomando) que realiza todo cálculo necesario y
 %le devuelva una respuesta a psocket, que le enviará al cliente. Además pcomando
@@ -42,37 +42,38 @@ dispatcher(ListenSocket) ->
 psocket(Socket) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Cmd} ->
+            io:format("Nuevo comando!!!"),
             idpbalance ! {self(), where},
             receive
-                {Node} -> spawn(Node, ?MODULE, pcomando, [Cmd, self()]) % Crea el pcomando en el servidor correspondiente
+                {Node} -> io:format("recibido")
+                %{Node} -> spawn(Node, ?MODULE, pcomando, [Cmd, self()]) % Crea el pcomando en el servidor correspondiente
             end;
         {error, closed} ->
             io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket])
-    end,
-    %rtas pcomando
-    receive
-        {con, ok} -> io:format("ok");
-        {con, error} -> ok
     end.
+    %rtas pcomando
+    %receive
+    %    {con, ok} -> io:format("ok");
+    %    {con, error} -> ok
+    %end.
 
 pcomado(Cmd, PidPsocket) ->
     case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
         ["CON", Username] -> PidPsocket ! {con, ok}
     end.
 
-
 %Proposito: recibe informacion de pstat, indica a psocket en que nodo crear pcomando. Primero
 % envia a pcomando despues actualiza la lista.
 pbalance(LoadList) ->
     receive
-        {PidPsocket, where} -> PidPsocket ! findminload(LoadList), pbalance(LoadList);
-        {Node, Load} -> pbalance(updateloadlist(LoadList, {Node, Load}))
+        {PidPsocket, where} -> PidPsocket ! lists:nth(1, lists:keysort(2, LoadList)), pbalance(LoadList);
+        {Node, Load} -> pbalance([{X,case X of Node -> Load; _ -> Y end} || {X,Y} <- LoadList])
     end.
 
 %Proposito: envia la carga de los nodos a pbalance
 pstat() ->
     [{idpbalance, Node} ! {node(), load()} || Node <- [node() | nodes()]],
-    timer:sleep(10000),
+    timer:sleep(1000),
     pstat().
 
 %Proposito: crea el ListenSocket e inicializa pstat, pbalance
@@ -85,11 +86,10 @@ pstat() ->
 % se verifica que gen_tcp:listen no tire error.
 
  init() ->
-    case gen_tcp:listen(0, [{active, false}]) of
+    case gen_tcp:listen(1234, [{active, false}, binary]) of
         {ok, ListenSocket} ->
-            {ok, Port} = inet:port(ListenSocket), % Busca un puerto disponible
-            spawn(?MODULE, dispatcher, [ListenSocket]);
-            %spawn(?MODULE, pstat, []),
-            %register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)]));
-        {error, _} -> io:format("Error al crear ListenSocket~n")
+            spawn(?MODULE, dispatcher, [ListenSocket]),
+            spawn(?MODULE, pstat, []),
+            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)]));
+        {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
     end.

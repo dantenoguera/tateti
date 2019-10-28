@@ -6,3 +6,10 @@ erl -name name@ip
 3) con nodes() podes fijarte con cuales estas conectado
 
 4) con node() te podes fijar el nombre de tu nodo
+
+
+en la terminal para conectarte:
+gen_tcp:connect({127,0,0,1}, 1234, [{active, true}, binary]).
+
+en la terminal para mandar comandos:
+get_tcp:send(Socket, "Hola").

@@ -1,5 +1,5 @@
 -module(aux).
--export([findminload/1, parsecom/1]).
+-export([findminload/1, updateloadlist/2]).
 
 
 findminload(LoadList) ->
