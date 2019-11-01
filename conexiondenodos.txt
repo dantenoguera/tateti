@@ -8,8 +8,12 @@ erl -name name@ip
 4) con node() te podes fijar el nombre de tu nodo
 
 
+---------------- No usar esto ----------------
 en la terminal para conectarte:
-gen_tcp:connect({127,0,0,1}, 1234, [{active, true}, binary]).
+{ok, S} = gen_tcp:connect({127,0,0,1}, 8091, [{active, true}, binary]).
 
 en la terminal para mandar comandos:
 get_tcp:send(Socket, "Hola").
+---------------------------------------------- DANGER ZONE
+
+los usuarios hacen esto: telnet localhost 8091

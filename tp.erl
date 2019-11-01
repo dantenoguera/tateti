@@ -42,11 +42,10 @@ dispatcher(ListenSocket) ->
 psocket(Socket) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Cmd} ->
-            io:format("Nuevo comando!!!"),
+            io:format("Nuevo comando!"),
             idpbalance ! {self(), where},
             receive
-                {Node} -> io:format("recibido")
-                %{Node} -> spawn(Node, ?MODULE, pcomando, [Cmd, self()]) % Crea el pcomando en el servidor correspondiente
+                Node -> io:format("Recibido! ~p ~n", [Node]), spawn(Node, ?MODULE, pcomando, ["hola", self()]) % Crea el pcomando en el servidor correspondiente
             end;
         {error, closed} ->
             io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket])
@@ -58,10 +57,10 @@ psocket(Socket) ->
     %end.
 
 pcomado(Cmd, PidPsocket) ->
-    case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
-        ["CON", Username] -> PidPsocket ! {con, ok}
-    end.
-
+    %case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
+    %    ["CON", Username] -> PidPsocket ! {con, ok}
+    %end.
+    io:format("soy pcomando, llegaste ~p", [Cmd]).
 %Proposito: recibe informacion de pstat, indica a psocket en que nodo crear pcomando. Primero
 % envia a pcomando despues actualiza la lista.
 pbalance(LoadList) ->
@@ -86,7 +85,7 @@ pstat() ->
 % se verifica que gen_tcp:listen no tire error.
 
  init() ->
-    case gen_tcp:listen(1234, [{active, false}, binary]) of
+    case gen_tcp:listen(8091, [{active, false}, binary]) of
         {ok, ListenSocket} ->
             spawn(?MODULE, dispatcher, [ListenSocket]),
             spawn(?MODULE, pstat, []),
