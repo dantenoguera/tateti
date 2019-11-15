@@ -17,3 +17,22 @@ get_tcp:send(Socket, "Hola").
 ---------------------------------------------- DANGER ZONE
 
 los usuarios hacen esto: telnet localhost 8091
+
+acordate de ir agregando las funciones al export pedazo de PELOTUDO.
+
+c(tp). tp:init().
+
+
+ CmdId  | Comando
+   1    | LSG
+   2    | NEW
+   3    | ACC
+   4    | PLA
+   5    | OBS
+   6    | LEA
+   7    | BYE
+   8    | UPD
+
+
+Comando | Error
+CON     | si el nombre ya existe 
