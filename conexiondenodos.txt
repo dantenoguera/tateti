@@ -17,13 +17,16 @@ get_tcp:send(Socket, "Hola").
 ---------------------------------------------- DANGER ZONE
 
 los usuarios hacen esto: telnet localhost 8091
+localhost = 127.0.0.1
 
 acordate de ir agregando las funciones al export pedazo de PELOTUDO.
 
-c(tp). tp:init().
+c(tp), tp:init().
+sudo ufw deny 8091
 
 
  CmdId  | Comando
+   0    | CON
    1    | LSG
    2    | NEW
    3    | ACC
@@ -35,4 +38,4 @@ c(tp). tp:init().
 
 
 Comando | Error
-CON     | si el nombre ya existe 
+CON     | si el nombre de usuario esta en uso el servidor respode: ERROR 0 "username"
