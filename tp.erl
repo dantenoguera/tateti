@@ -57,13 +57,15 @@ pcomando(Cmd, PidPsocket, User) ->
                                   error -> PidPsocket ! {con, error, UserName}
                               end;
          ["LSG"] -> ok;
-         ["NEW", _] -> ok;
+         ["NEW", _] -> idplayground ! newgame;
          ["ACC"] -> ok;
          ["PLA"] -> ok;
          ["LEA"] -> ok;
          ["BYE"] -> ok;
          ["UPD"] -> ok
     end.
+
+playground(Node, NodeList) ->
 
 
 
@@ -106,6 +108,7 @@ pstat() ->
             spawn(?MODULE, pstat, []),
             register(iduserlisthandler, spawn(?MODULE, userlisthandler, [[]])),
             register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)]));
+            register(idplayground, spawn(?MODULE, playground, [node(), nodes()])),
 
         {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
     end.
