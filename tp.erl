@@ -1,5 +1,5 @@
 -module(tp).
--export([init/0, dispatcher/1, psocket/2, pstat/0, pbalance/1, pcomando/3, userlisthandler/1]).
+-export([init/0, dispatcher/1, psocket/2, pstat/0, pbalance/1, pcomando/3, userlisthandler/1, gamesHandler/4]).
 -import ('aux', [findminload/1, updateloadlist/2]).
 -define(SERVERS, ['nodoA@127.0.0.1']).
 -define(LOADS, [0]).
@@ -46,7 +46,13 @@ psocket(Socket, User) ->
     %rtas pcomando
     receive
         {con, ok, UserName} -> gen_tcp:send(Socket, "OK 0 " ++ UserName ++ "\n"), psocket(Socket, UserName);
-        {con, error, UserName} -> gen_tcp:send(Socket, "ERROR 0 " ++ UserName ++ "\n"), psocket(Socket, unnamed)
+        {con, error, UserName} -> gen_tcp:send(Socket, "ERROR 0 " ++ UserName ++ "\n"), psocket(Socket, unnamed);
+        {new, ok} -> gen_tcp:send(Socket, "OK 2 \n"), psocket(Socket, User);
+        {lsg, ok, GameList, WaitList} -> A = io_lib:format("~p ~n",[GameList]), lists:flatten(A),
+                                         B = io_lib:format("~p ~n",[WaitList]), lists:flatten(B),
+                                         gen_tcp:send(Socket, ["Juegos en curso \n" | A ]),
+                                         gen_tcp:send(Socket, ["Juegos en espera de contrincante \n" | B]),
+                                         psocket(Socket, User)
 
     end.
 
@@ -57,13 +63,14 @@ pcomando(Cmd, PidPsocket, User) ->
                                   ok -> PidPsocket ! {con, ok, UserName};
                                   error -> PidPsocket ! {con, error, UserName}
                               end;
-         ["LSG", _] -> idplayground ! {self(), listgames};
+         ["LSG", _] -> idgamesHandler ! {self(), listgames},
                        receive
-                           {_, GameList, WaitList} -> PidPsocket ! {ok, GameList, WaitList};
-
-         ["NEW", _] -> idplayground ! {self(), newgame, User};
+                           {_, GameList, WaitList} -> PidPsocket ! {lsg, ok, GameList, WaitList}
+                       end;
+         ["NEW", _] -> idgamesHandler ! {self(), newgame, User},
                        receive
-                           ok -> PidPsocket ! {new, ok, User}
+                           ok -> PidPsocket ! {new, ok}
+                       end;
          ["ACC"] -> ok;
          ["PLA"] -> ok;
          ["LEA"] -> ok;
@@ -73,14 +80,15 @@ pcomando(Cmd, PidPsocket, User) ->
 
 
 %uno por nodo?
-playground(Node, NodeList, GameList, WaitList) ->
+gamesHandler(Node, NodeList, GameList, WaitList) ->
     receive
-        {PidPcom, newgame, User} -> [{User, length(GameList) + 1} | WaitList],
-                                    PidPcom ! ok;
-        {PidPcom, listgames} -> PidPcom ! {ok, GameList, WaitList};
+        {PidPcom, newgame, User} -> PidPcom ! ok,
+                                    gamesHandler(Node, NodeList, GameList, [{User, length(GameList) + 1} | WaitList]);
+        {PidPcom, listgames} -> PidPcom ! {ok, GameList, WaitList},
+                                gamesHandler(Node, NodeList, GameList, WaitList)
     end.
 
-game() ->
+game() -> ok.
 
 
 
@@ -116,14 +124,12 @@ pstat() ->
 %se verifica que gen_tcp:listen no tire error.
 
  init() ->
-    process_flag(trap_exit, true),
     case gen_tcp:listen(8091, [{active, false}, binary]) of
         {ok, ListenSocket} ->
             register(iddispatcher, spawn(?MODULE, dispatcher, [ListenSocket])),
             spawn(?MODULE, pstat, []),
             register(iduserlisthandler, spawn(?MODULE, userlisthandler, [[]])),
-            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)]));
-            register(idplayground, spawn(?MODULE, playground, [node(), nodes(), [], []])),
-
+            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)])),
+            register(idgamesHandler, spawn(?MODULE, gamesHandler, [node(), nodes(), [], []]));
         {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
     end.
