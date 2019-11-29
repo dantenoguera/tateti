@@ -1,8 +1,5 @@
 -module(tp).
--export([init/0, dispatcher/1, psocket/2, pstat/0, pbalance/1, pcomando/3, userlisthandler/1, gamesHandler/4]).
--import ('aux', [findminload/1, updateloadlist/2]).
--define(SERVERS, ['nodoA@127.0.0.1']).
--define(LOADS, [0]).
+-compile(export_all).
 
 %calcula la carga del nodo.
 load() -> length(erlang:ports()).
@@ -123,13 +120,20 @@ pstat() ->
 
 %se verifica que gen_tcp:listen no tire error.
 
- init() ->
-    case gen_tcp:listen(8091, [{active, false}, binary]) of
+init(Port) ->
+    case gen_tcp:listen(Port, [{active, false}, binary]) of
         {ok, ListenSocket} ->
             register(iddispatcher, spawn(?MODULE, dispatcher, [ListenSocket])),
             spawn(?MODULE, pstat, []),
             register(iduserlisthandler, spawn(?MODULE, userlisthandler, [[]])),
-            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip(?SERVERS, ?LOADS)])),
+            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip([node() | nodes()], [999 || _<- [node() | nodes()]])])),
             register(idgamesHandler, spawn(?MODULE, gamesHandler, [node(), nodes(), [], []]));
         {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
     end.
+
+
+connect(Node) ->
+  case net_adm:ping(Node) of
+    pang -> connect(Node);
+    pong -> io:format("Conectado a ~p ~n", [Node])
+  end.

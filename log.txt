@@ -1,1 +1,1 @@
-empece con los comandos, ver new y lsg
+checker que un usuario no este en otro servidor
