@@ -55,7 +55,7 @@ psocket(Socket, User) ->
 
 pcomando(Cmd, PidPsocket, User) ->
     case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
-         ["CON", UserName] -> iduserlisthandler ! {UserName, self()},
+         ["CON", UserName] -> iduserListHandler ! {UserName, self()},
                               receive
                                   ok -> PidPsocket ! {con, ok, UserName};
                                   error -> PidPsocket ! {con, error, UserName}
@@ -76,25 +76,49 @@ pcomando(Cmd, PidPsocket, User) ->
     end.
 
 
-%uno por nodo?
+%uno por nodo
 gamesHandler(Node, NodeList, GameList, WaitList) ->
     receive
+        {localGames, PidglobGames} -> PidglobGames ! GameList, gamesHandler(Node, NodeList, GameList, WaitList);
+        {localWaitList, PidglobW} -> PidglobW ! WaitList, gamesHandler(Node, NodeList, GameList, WaitList);
         {PidPcom, newgame, User} -> PidPcom ! ok,
                                     gamesHandler(Node, NodeList, GameList, [{User, length(GameList) + 1} | WaitList]);
-        {PidPcom, listgames} -> PidPcom ! {ok, GameList, WaitList},
+        {PidPcom, listgames} -> PidPcom ! {ok, globalGames(GameList), globalW(WaitList)},
                                 gamesHandler(Node, NodeList, GameList, WaitList)
     end.
 
 game() -> ok.
 
 
+% retorna un lista con los usuarios de todos los servers.
+globalUsers(LocalUsers) ->
+    LocalUsers ++ lists:append(lists:map( fun(Node)->
+                {iduserListHandler, Node} ! {localUsers, self()},
+                receive  FUsers -> FUsrs end end,
+            nodes())).
+
+globalGames(LocalGames) ->
+    LocaGames ++ lists:append(lists:map( fun(Node)->
+                {idgamesHandler, Node} ! {localGames, self()},
+                receive  FGames -> FGames end end,
+            nodes())).
+
+
+globalW(LocalWaitList) ->
+    LocalWaitList ++ lists:append(lists:map( fun(Node)->
+                {idgamesHandler, Node} ! {localWaitList, self()},
+                receive  FWList -> FWList end end,
+            nodes())).
+
+
 
 %Maneja el tema de los usuarios
-userlisthandler(UserNameList) ->
+userListHandler(UserNameList) ->
     receive
-        {UserName, PidPcom} -> case lists:member(UserName, UserNameList) of
-                                    true -> PidPcom ! error, userlisthandler(UserNameList);
-                                    false -> PidPcom ! ok, userlisthandler([UserName | UserNameList])
+        {localUsers, PidglobUsrs} -> PidglobUsrs ! UserNameList, userListHandler(UserNameList)
+        {UserName, PidPcom} -> case lists:member(UserName, globalUsers(UserNameList)) of
+                                    true -> PidPcom ! error, userListHandler(UserNameList);
+                                    false -> PidPcom ! ok, userListHandler([UserName | UserNameList])
                                end
     end.
 
@@ -125,7 +149,7 @@ init(Port) ->
         {ok, ListenSocket} ->
             register(iddispatcher, spawn(?MODULE, dispatcher, [ListenSocket])),
             spawn(?MODULE, pstat, []),
-            register(iduserlisthandler, spawn(?MODULE, userlisthandler, [[]])),
+            register(iduserListHandler, spawn(?MODULE, userListHandler, [[]])),
             register(idpbalance, spawn(?MODULE, pbalance, [lists:zip([node() | nodes()], [999 || _<- [node() | nodes()]])])),
             register(idgamesHandler, spawn(?MODULE, gamesHandler, [node(), nodes(), [], []]));
         {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
