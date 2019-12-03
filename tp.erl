@@ -1,17 +1,11 @@
 -module(tp).
 -compile(export_all).
+-define (Board, [[" ", " ", " "], [" ", " ", " "], [" ", " ", " "]]).
 
 %calcula la carga del nodo.
 load() -> length(erlang:ports()).
 
 %cuando un cliente se conecta crea un nuevo hilo (psocket) que atenderá todos los pedidos de ese cliente.
-
-%gen_tcp:accept(ListenSocket) acepta un request de conexion que viene del LisenSocket devuelve
-%{ok, Socket}
-%{error, closed} si listen socket se cerro
-
-%control de error en gen_tcp:accept(ListenSocket)
-
 dispatcher(ListenSocket) ->
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
@@ -26,10 +20,6 @@ dispatcher(ListenSocket) ->
 %se encargará de generar los mensajes correspondientes para el resto de los clientes
 %y mandarlos a sus respectivos psocket, de ser necesario.
 
-%%- gen_tcp:recv(Socket, 0). Recive un paquete de un socket, 0 indica que pude ser de longitud arbitraria,
-%devuelve ok con el paquete o error
-
-%-control de error en gen_tcp:recv(Socket, 0)
 psocket(Socket, User) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Cmd} ->
@@ -40,8 +30,7 @@ psocket(Socket, User) ->
         {error, closed} ->
             io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket])
     end,
-    %rtas pcomando
-    receive
+    receive %rtas pcomando
         {con, ok, UserName} -> gen_tcp:send(Socket, "OK 0 " ++ UserName ++ "\n"), psocket(Socket, UserName);
         {con, error, UserName} -> gen_tcp:send(Socket, "ERROR 0 " ++ UserName ++ "\n"), psocket(Socket, unnamed);
         {new, ok} -> gen_tcp:send(Socket, "OK 2 \n"), psocket(Socket, User), psocket(Socket, User);
@@ -49,7 +38,9 @@ psocket(Socket, User) ->
                                          B = io_lib:format("~p ~n",[WaitList]), lists:flatten(B),
                                          gen_tcp:send(Socket, ["Juegos en curso \n" | A ]),
                                          gen_tcp:send(Socket, ["Juegos en espera de contrincante \n" | B]),
-                                         psocket(Socket, User)
+                                         psocket(Socket, User);
+        {acc, ok} -> gen_tcp:send(Socket, ["OK 3"]);
+        {acc, error} -> gen_tcp:send(Socket, ["ERROR 3"])
     end.
 
 pcomando(Cmd, PidPsocket, User) ->
@@ -67,13 +58,16 @@ pcomando(Cmd, PidPsocket, User) ->
                     receive
                         ok -> PidPsocket ! {new, ok}
                     end;
-         ["ACC", JuegoId] -> idgamesHandler ! {accept, self(), User, JuegoId};
+         ["ACC", JuegoId] -> idgamesHandler ! {accept, self(), User, JuegoId},
+                             receive
+                                 error -> PidPsocket ! {acc, error};
+                                 ok -> PidPsocket ! {acc, ok}
+                             end;
          ["PLA"] -> ok;
          ["LEA"] -> ok;
          ["BYE"] -> ok;
          ["UPD"] -> ok
     end.
-
 
 %uno por nodo
 gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter) ->
@@ -85,10 +79,26 @@ gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter) ->
                                     gamesHandler(Node, NodeList, GameList, [{User, globalCounter(GamesCouter) + 1} | WaitList], GamesCouter + 1);
         {listgames, PidPcom} -> PidPcom ! {globalGames(GameList), gobalWaiting(WaitList)},
                                 gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {accept, PidPcom, User, JuegoId} -> ok
+        {accept, PidPcom, User, GameId} -> case findGame(WaitList, GameId) of
+                                                error -> PidPcom ! error;
+                                                Host -> idpbalance ! {self(), where},
+                                                        receive Node end,
+                                                        spawn(Node, ?MODULE, game, [Host, User, GameId, ?Board]),
+                                                        PidPcom -> ok
+                                            end
     end.
 
-game() -> ok.
+
+findGame([], _) -> error;
+findGame([{User, Id} | T], JuegoId) ->
+    case JuegoId == Id of
+         false -> findGame(T, JuegoId);
+         true -> User
+    end.
+
+
+game(J1, J2, GameId, Board) ->
+
 
 
 % retorna un lista con los usuarios de todos los servers.
@@ -129,11 +139,11 @@ usersManager(UsersList) ->
     end.
 
 
-%recibe informacion de pstat, indica a psocket en que nodo crear pcomando. Primero
-% envia a pcomando despues actualiza la lista.
+%recibe informacion de pstat, indica a psocket en que nodo crear pcomando.
+%indica a gamesHandler en que nodo crear el juego.
 pbalance(LoadList) ->
     receive
-        {PidPsocket, where} -> PidPsocket ! lists:nth(1, lists:keysort(2, LoadList)), pbalance(LoadList);
+        {Pid, where} -> Pid ! lists:nth(1, lists:keysort(2, LoadList)), pbalance(LoadList);
         {Node, Load} -> pbalance([{X,case X of Node -> Load; _ -> Y end} || {X,Y} <- LoadList])
     end.
 
