@@ -39,8 +39,8 @@ psocket(Socket, User) ->
                                          gen_tcp:send(Socket, ["Juegos en curso \n" | A ]),
                                          gen_tcp:send(Socket, ["Juegos en espera de contrincante \n" | B]),
                                          psocket(Socket, User);
-        {acc, ok} -> gen_tcp:send(Socket, ["OK 3"]);
-        {acc, error} -> gen_tcp:send(Socket, ["ERROR 3"])
+        {acc, ok} -> gen_tcp:send(Socket, ["OK 3 \n"]);
+        {acc, error} -> gen_tcp:send(Socket, ["ERROR 3 \n"])
     end.
 
 pcomando(Cmd, PidPsocket, User) ->
@@ -58,12 +58,13 @@ pcomando(Cmd, PidPsocket, User) ->
                     receive
                         ok -> PidPsocket ! {new, ok}
                     end;
-         ["ACC", JuegoId] -> idgamesHandler ! {accept, self(), User, JuegoId},
+         ["ACC", JuegoId] -> idgamesHandler ! {accept, self(), User, list_to_integer(JuegoId)},
                              receive
                                  error -> PidPsocket ! {acc, error};
                                  ok -> PidPsocket ! {acc, ok}
                              end;
-         ["PLA"] -> ok;
+         ["PLA", GameId, X, Y] -> idgamesHandler ! {play, GameId, X, Y};
+         ["PLA", _] -> ok;
          ["LEA"] -> ok;
          ["BYE"] -> ok;
          ["UPD"] -> ok
@@ -77,15 +78,20 @@ gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter) ->
         {localCount, PidglobCount} -> PidglobCount ! GamesCouter, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
         {newgame, PidPcom, User} -> PidPcom ! ok,
                                     gamesHandler(Node, NodeList, GameList, [{User, globalCounter(GamesCouter) + 1} | WaitList], GamesCouter + 1);
-        {listgames, PidPcom} -> PidPcom ! {globalGames(GameList), gobalWaiting(WaitList)},
+        {listgames, PidPcom} -> PidPcom ! {globalGames(GameList), globalWaiting(WaitList)},
                                 gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {accept, PidPcom, User, GameId} -> case findGame(WaitList, GameId) of
-                                                error -> PidPcom ! error;
-                                                Host -> idpbalance ! {self(), where},
-                                                        receive Node end,
-                                                        spawn(Node, ?MODULE, game, [Host, User, GameId, ?Board]),
-                                                        PidPcom -> ok
-                                            end
+        {accept, PidPcom, User, GameId} -> case findGame(globalWaiting(WaitList), GameId) of
+                                                error -> PidPcom ! error, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
+                                                Host -> io:format("hola ~n"),
+                                                        idpbalance ! {self(), where},
+                                                        receive
+															{Node, _} -> io:format("hola2 ~n"),
+																		 spawn(Node, ?MODULE, game, [Host, User, GameId, ?Board]),
+															             PidPcom ! ok,
+															             gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter)
+														end
+                                            end;
+        {play, GameId, X, Y} -> 
     end.
 
 
@@ -98,6 +104,7 @@ findGame([{User, Id} | T], JuegoId) ->
 
 
 game(J1, J2, GameId, Board) ->
+	io:format("J1: ~p, J2: ~p, GameId: ~p ~n", [J1, J2, GameId]).
 
 
 
@@ -115,7 +122,7 @@ globalGames(LocalGames) ->
                 receive  Games -> Games end end,
             nodes())).
 
-gobalWaiting(LocalWaitList) ->
+globalWaiting(LocalWaitList) ->
     LocalWaitList ++ lists:append(lists:map( fun(Node)->
                 {idgamesHandler, Node} ! {localWaitList, self()},
                 receive  WList -> WList end end,
