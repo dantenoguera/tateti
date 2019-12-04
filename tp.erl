@@ -88,7 +88,7 @@ gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter) ->
 															{Node, _} -> io:format("hola2 ~n"),
 																		 spawn(Node, ?MODULE, game, [Host, User, GameId, ?Board]),
 															             PidPcom ! ok,
-															             gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter)
+															             gamesHandler(Node, NodeList, GameList, [X || X <- WaitList, X =/= {Host, GameId}], GamesCouter)
 														end
                                             end;
         {play, GameId, X, Y} -> 

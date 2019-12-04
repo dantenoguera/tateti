@@ -40,6 +40,14 @@ sudo ufw deny 8091
 Comando | Error
 CON     | si el nombre de usuario esta en uso el servidor respode: ERROR 0 "username"
 
+X | O | X
+X | O | X
+O | O | O
 
 
+
+
+
+
+ 
 
