@@ -1,0 +1,2 @@
+-module(tp).
+-compile(export_all).

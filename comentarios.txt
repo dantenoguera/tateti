@@ -25,29 +25,12 @@ c(tp), tp:connect('nB@127.0.0.1'), tp:init(8000).
 sudo ufw deny 8091
 
 
- CmdId  | Comando
-   0    | CON
-   1    | LSG
-   2    | NEW
-   3    | ACC
-   4    | PLA
-   5    | OBS
-   6    | LEA
-   7    | BYE
-   8    | UPD
-
-
-Comando | Error
-CON     | si el nombre de usuario esta en uso el servidor respode: ERROR 0 "username"
-
 X | O | X
 X | O | X
 O | O | O
 
 
-
-
-
+c(tp), tp:init(8001).
 
  
 

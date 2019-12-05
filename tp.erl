@@ -25,7 +25,8 @@ psocket(Socket, User) ->
         {ok, Cmd} ->
             idpbalance ! {self(), where},
             receive
-                {Node, _} -> spawn(Node, ?MODULE, pcomando, [binary_to_list(Cmd), self(), User]) % Crea el pcomando en el servidor correspondiente
+                {Node, _} -> spawn(Node, ?MODULE, pcomando, [binary_to_list(Cmd), self(), node(), User]), % Crea el pcomando en el servidor correspondiente
+                             io:format("pcomando se crea en ~p ~n",[Node])
             end;
         {error, closed} ->
             io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket])
@@ -34,36 +35,34 @@ psocket(Socket, User) ->
         {con, ok, UserName} -> gen_tcp:send(Socket, "OK 0 " ++ UserName ++ "\n"), psocket(Socket, UserName);
         {con, error, UserName} -> gen_tcp:send(Socket, "ERROR 0 " ++ UserName ++ "\n"), psocket(Socket, unnamed);
         {new, ok} -> gen_tcp:send(Socket, "OK 2 \n"), psocket(Socket, User), psocket(Socket, User);
-        {lsg, ok, GameList, WaitList} -> A = io_lib:format("~p ~n",[GameList]), lists:flatten(A),
-                                         B = io_lib:format("~p ~n",[WaitList]), lists:flatten(B),
-                                         gen_tcp:send(Socket, ["Juegos en curso \n" | A ]),
-                                         gen_tcp:send(Socket, ["Juegos en espera de contrincante \n" | B]),
-                                         psocket(Socket, User);
+        {lsg, ok, GameList} -> A = io_lib:format("~p ~n",[GameList]), lists:flatten(A),
+                               gen_tcp:send(Socket, ["Juegos \n" | A ]),
+                                psocket(Socket, User);
         {acc, ok} -> gen_tcp:send(Socket, ["OK 3 \n"]);
         {acc, error} -> gen_tcp:send(Socket, ["ERROR 3 \n"])
     end.
 
-pcomando(Cmd, PidPsocket, User) ->
+pcomando(Cmd, PidPsocket, Node, User) ->
     case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
          ["CON", UserName] -> idusersManager ! {UserName, self()},
                               receive
                                   ok -> PidPsocket ! {con, ok, UserName};
                                   error -> PidPsocket ! {con, error, UserName}
                               end;
-         ["LSG"] -> idgamesHandler ! {listgames, self()},
+         ["LSG"] -> idgamesManager ! {listgames, self()},
                     receive
-                        {GameList, WaitList} -> PidPsocket ! {lsg, ok, GameList, WaitList}
+                        GameList -> PidPsocket ! {lsg, ok, GameList}
                     end;
-         ["NEW"] -> idgamesHandler ! {newgame, self(), User},
+         ["NEW"] -> idgamesManager ! {newgame, self(), User},
                     receive
                         ok -> PidPsocket ! {new, ok}
                     end;
-         ["ACC", JuegoId] -> idgamesHandler ! {accept, self(), User, list_to_integer(JuegoId)},
+         ["ACC", GameId] -> idgamesManager ! {accept, self(), User, list_to_integer(GameId)},
                              receive
                                  error -> PidPsocket ! {acc, error};
                                  ok -> PidPsocket ! {acc, ok}
                              end;
-         ["PLA", GameId, X, Y] -> idgamesHandler ! {play, GameId, X, Y};
+         ["PLA", GameId, X, Y] -> idgamesManager ! {play, GameId, X, Y};
          ["PLA", _] -> ok;
          ["LEA"] -> ok;
          ["BYE"] -> ok;
@@ -71,66 +70,68 @@ pcomando(Cmd, PidPsocket, User) ->
     end.
 
 %uno por nodo
-gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter) ->
+gamesManager(GameList, GamesCounter) ->
     receive
-        {localGames, PidglobGames} -> PidglobGames ! GameList, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {localWaitList, PidglobW} -> PidglobW ! WaitList, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {localCount, PidglobCount} -> PidglobCount ! GamesCouter, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {newgame, PidPcom, User} -> PidPcom ! ok,
-                                    gamesHandler(Node, NodeList, GameList, [{User, globalCounter(GamesCouter) + 1} | WaitList], GamesCouter + 1);
-        {listgames, PidPcom} -> PidPcom ! {globalGames(GameList), globalWaiting(WaitList)},
-                                gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-        {accept, PidPcom, User, GameId} -> case findGame(globalWaiting(WaitList), GameId) of
-                                                error -> PidPcom ! error, gamesHandler(Node, NodeList, GameList, WaitList, GamesCouter);
-                                                Host -> io:format("hola ~n"),
-                                                        idpbalance ! {self(), where},
-                                                        receive
-															{Node, _} -> io:format("hola2 ~n"),
-																		 spawn(Node, ?MODULE, game, [Host, User, GameId, ?Board]),
-															             PidPcom ! ok,
-															             gamesHandler(Node, NodeList, GameList, [X || X <- WaitList, X =/= {Host, GameId}], GamesCouter)
-														end
-                                            end;
-        {play, GameId, X, Y} -> 
+        {updateGame, GameId} -> {Node,PidGame, GameId, State} = findGame(GameList, GameId),
+                                gamesManager([{Node, PidGame, GameId, "en curso"} | lists:delete({Node,PidGame, GameId, "en espera de contrincante"}, GameList)], GamesCounter);
+        {localGames, PidglobGames} -> PidglobGames ! GameList, gamesManager(GameList, GamesCounter);
+        {localCount, PidglobCount} -> PidglobCount ! GamesCounter, gamesManager(GameList, GamesCounter);
+        {newgame, PidPcom, User} -> idpbalance ! {self(), where},
+                                    receive
+                                        {Node, _} -> PidGame = spawn(Node, ?MODULE, game, [User, GamesCounter, ?Board]),
+                                                     PidPcom ! ok,
+                                                     gamesManager([{Node,PidGame, GamesCounter, "en espera de contrincante"} | GameList], GamesCounter + 1)
+                                    end;
+        {listgames, PidPcom} -> PidPcom ! globalGames(GameList),
+                                gamesManager(GameList, GamesCounter);
+        {accept, PidPcom, User, GameId} -> io:format("hla! ~n"),
+                                           case findGame(globalGames(GameList), GameId) of
+                                                error -> ok;
+                                                {Node,PidGame, GameId, State} -> PidGame ! {join, User},
+                                                                                 case node() == Node of
+                                                                                      true -> ok;
+                                                                                      false -> {idgamesManager, Node} ! {updateGame, GameId}
+                                                                                 end,
+                                                                                 PidPcom ! ok,
+                                                                                 gamesManager([{Node, PidGame, GameId, "en curso"} | lists:delete({Node,PidGame, GameId, State}, GameList)], GamesCounter)
+                                           end;
+        {play, GameId, X, Y} -> ok %revisar !!!!!!
     end.
 
 
 findGame([], _) -> error;
-findGame([{User, Id} | T], JuegoId) ->
-    case JuegoId == Id of
-         false -> findGame(T, JuegoId);
-         true -> User
+findGame([{Node,PidGame, GameId, State} | T], Id) ->
+    case GameId == Id of
+         false -> findGame(T, Id);
+         true -> {Node,PidGame, GameId, State}
     end.
 
 
-game(J1, J2, GameId, Board) ->
-	io:format("J1: ~p, J2: ~p, GameId: ~p ~n", [J1, J2, GameId]).
+game(J1, GameId, Board) ->
+	io:format("J1: ~s ,GameId: ~p ~n", [J1, GameId]),
+    receive
+        {join, J2} -> io:format("J2: ~s", [J2])
+    end.
 
 
 
 % retorna un lista con los usuarios de todos los servers.
 globalUsers(LocalUsers) ->
     LocalUsers ++ lists:append(lists:map( fun(Node)->
-                {idgamesHandler, Node} ! {localGames, self()},
+                {idgamesManager, Node} ! {localGames, self()},
                 receive  Users -> Users end end,
             nodes())).
 
 
 globalGames(LocalGames) ->
     LocalGames ++ lists:append(lists:map( fun(Node)->
-                {idgamesHandler, Node} ! {localGames, self()},
+                {idgamesManager, Node} ! {localGames, self()},
                 receive  Games -> Games end end,
-            nodes())).
-
-globalWaiting(LocalWaitList) ->
-    LocalWaitList ++ lists:append(lists:map( fun(Node)->
-                {idgamesHandler, Node} ! {localWaitList, self()},
-                receive  WList -> WList end end,
             nodes())).
 
 
 globalCounter(LocalCount) ->
-    Counters = lists:map( fun(Node)-> {idgamesHandler, Node} ! {localCount, self()},
+    Counters = lists:map( fun(Node)-> {idgamesManager, Node} ! {localCount, self()},
                                        receive  Count -> Count end end, nodes()),
     LocalCount + lists:foldl(fun(X, Sum) -> X + Sum end, 0, Counters).
 
@@ -147,7 +148,7 @@ usersManager(UsersList) ->
 
 
 %recibe informacion de pstat, indica a psocket en que nodo crear pcomando.
-%indica a gamesHandler en que nodo crear el juego.
+%indica a gamesManager en que nodo crear el juego.
 pbalance(LoadList) ->
     receive
         {Pid, where} -> Pid ! lists:nth(1, lists:keysort(2, LoadList)), pbalance(LoadList);
@@ -167,6 +168,30 @@ pstat() ->
 
 %se verifica que gen_tcp:listen no tire error.
 
+inita(Port) ->
+    connect('nB@127.0.0.1'),
+    case gen_tcp:listen(Port, [{active, false}, binary]) of
+        {ok, ListenSocket} ->
+            register(iddispatcher, spawn(?MODULE, dispatcher, [ListenSocket])),
+            spawn(?MODULE, pstat, []),
+            register(idusersManager, spawn(?MODULE, usersManager, [[]])),
+            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip([node() | nodes()], [999 || _<- [node() | nodes()]])])),
+            register(idgamesManager, spawn(?MODULE, gamesManager, [[], 0]));
+        {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
+    end.
+
+initb(Port) ->
+    connect('nA@127.0.0.1'),
+    case gen_tcp:listen(Port, [{active, false}, binary]) of
+        {ok, ListenSocket} ->
+            register(iddispatcher, spawn(?MODULE, dispatcher, [ListenSocket])),
+            spawn(?MODULE, pstat, []),
+            register(idusersManager, spawn(?MODULE, usersManager, [[]])),
+            register(idpbalance, spawn(?MODULE, pbalance, [lists:zip([node() | nodes()], [999 || _<- [node() | nodes()]])])),
+            register(idgamesManager, spawn(?MODULE, gamesManager, [[], 0]));
+        {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
+    end.
+
 init(Port) ->
     case gen_tcp:listen(Port, [{active, false}, binary]) of
         {ok, ListenSocket} ->
@@ -174,10 +199,9 @@ init(Port) ->
             spawn(?MODULE, pstat, []),
             register(idusersManager, spawn(?MODULE, usersManager, [[]])),
             register(idpbalance, spawn(?MODULE, pbalance, [lists:zip([node() | nodes()], [999 || _<- [node() | nodes()]])])),
-            register(idgamesHandler, spawn(?MODULE, gamesHandler, [node(), nodes(), [], [], 0]));
+            register(idgamesManager, spawn(?MODULE, gamesManager, [[], 0]));
         {error, Msg} -> io:format("Error: ~p al crear ListenSocket~n", [Msg])
     end.
-
 
 connect(Node) ->
   case net_adm:ping(Node) of
