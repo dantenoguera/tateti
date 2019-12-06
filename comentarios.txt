@@ -33,4 +33,4 @@ O | O | O
 c(tp), tp:init(8001).
 
  
-
+CON: un usuario se registra una única vez.
