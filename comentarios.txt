@@ -33,4 +33,4 @@ O | O | O
 c(tp), tp:init(8001).
 
  
-CON: un usuario se registra una única vez.
+CON: un usuario se registra una única vez. Un usuario no registrado solo puede listar juegos

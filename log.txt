@@ -1,1 +1,0 @@
-checker que un usuario no este en otro servidor
