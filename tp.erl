@@ -6,12 +6,7 @@
 load() -> length(erlang:ports()).
 
 
-% formate el tablero para imprimir
-prettyPrint(Board) ->
-	lists:sublist(Board,1,3) ++ "\n"
-    ++ lists:sublist(Board,4,3) ++ "\n"
-    ++ lists:sublist(Board,7,3) ++ "\n".
-
+% formatea el tablero para imprimir.
 prettyPrint(Board) ->
 	lists:nth(1, Board) ++ " | "
 	++ lists:nth(2, Board) ++ " | "
@@ -39,11 +34,25 @@ dispatcher(ListenSocket) ->
 % envia mensajes de actualizacion al cliente.
 sendUpdate(Socket) ->
 	receive
-		{playerJoined, [GameId, Player]} -> gen_tcp:send(Socket, "UPD 1 " ++ integer_to_list(GameId) ++ " " ++ Player ++ " " ++ "se unio al juego \n");
-		{newBoard, [GameId, P1, P2, Turn, Board]} -> gen_tcp:send(Socket, "UPD 2 " ++ integer_to_list(GameId) ++ "\n" ++prettyPrint(Board) ++ "\n")
+		{playerJoined, [GameId, Player]} ->
+			gen_tcp:send(Socket, "UPD 1 " ++ integer_to_list(GameId) ++ " "
+			++ Player ++ " " ++ "se unio al juego \n");
+		{continue, [GameId, P1, P2, Turn, Board]} ->
+			gen_tcp:send(Socket, "UPD 2 " ++ integer_to_list(GameId)
+			++ " turno: " ++ Turn  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
+			++ prettyPrint(Board) ++ "\n");
+		{win, [GameId, P1, P2, Turn, Board, Winner]} ->
+			gen_tcp:send(Socket, "UPD 3 " ++ integer_to_list(GameId) ++ " "
+			++ " turno: " ++ Turn  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
+			++ prettyPrint(Board) ++ "\n"
+			++ "gana " ++ Winner ++ "\n");
+		{tie, [GameId, P1, P2, Turn, Board]} ->
+			gen_tcp:send(Socket, "UPD 4 " ++ integer_to_list(GameId) ++ " "
+			++ " turno: " ++ Turn  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
+			++ prettyPrint(Board) ++ "\n"
+			++ " empate" ++ "\n")
 	end,
 	sendUpdate(Socket).
-
 
 % por cada pedido, psocket crea un nuevo proceso (pcomando) que realiza todo cálculo necesario y
 % le devuelva una respuesta a psocket, que le enviará al cliente. Además pcomando
@@ -72,7 +81,7 @@ psocket(Socket, PidSendUpd, User) ->
         {acc, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, PidSendUpd, User);
         {pla, ok, CmdId, GameId, R, C} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ GameId ++ " " ++ R ++ " " ++ C ++ "\n"), psocket(Socket, PidSendUpd, User);
         {pla, error, CmdId, GameId, R, C} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ " " ++ R ++ " " ++ C ++ "\n"), psocket(Socket, PidSendUpd, User);
-        invalid -> gen_tcp:send(Socket, "Comando Invalido \n"), psocket(Socket, PidSendUpd, User)
+        invalid -> gen_tcp:send(Socket, "Comando invalido \n"), psocket(Socket, PidSendUpd, User)
     end.
 
 
@@ -117,7 +126,7 @@ pcomando(Cmd, PidPsocket, Node, User, PidSendUpd) ->
     end.
 
 
-
+% gestiona los juegos.
 gamesManager(GameList, GamesCounter) ->
     receive
         {updateGame, GameId} ->
@@ -150,20 +159,34 @@ gamesManager(GameList, GamesCounter) ->
         {play, PidPcom, GameId, Player, R, C} ->
             case findGame(globalGames(GameList), GameId) of
                  error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
-                 {Node,PidGame, GameId, {P1, NodeP1}, {P2, NodeP2}, Observers, State} ->
+                 {Node,PidGame, GameId, {P1, NodeP1}, {P2, NodeP2}, _, _} ->
                      PidGame ! {play, node(), Player, list_to_integer(R), list_to_integer(C)},
                      receive
-                         {ok, {Turn, NewBoard}} ->
+                         {continue, {Turn, NewBoard}} ->
                              PidPcom ! ok,
-                             {idsendUpdateManager, NodeP1} ! {node(), newBoard, P1, [GameId, P1, P2, Turn, NewBoard]},
+                             {idsendUpdateManager, NodeP1} ! {node(), continue, P1, [GameId, P1, P2, Turn, NewBoard]},
 							 receive ok -> ok end,
-							 {idsendUpdateManager, NodeP2} ! {node(), newBoard, P2, [GameId, P1, P2, Turn, NewBoard]},
+							 {idsendUpdateManager, NodeP2} ! {node(), continue, P2, [GameId, P1, P2, Turn, NewBoard]},
 							 receive ok -> ok end;
-                         error -> PidPcom ! error
+						 {win, {Turn, NewBoard}, Winner} ->
+							 PidPcom ! ok,
+							 {idsendUpdateManager, NodeP1} ! {node(), win, P1, [GameId, P1, P2, Turn, NewBoard, Winner]},
+							 receive ok -> ok end,
+							 {idsendUpdateManager, NodeP2} ! {node(), win, P2, [GameId, P1, P2, Turn, NewBoard, Winner]},
+							 receive ok -> ok end;
+						 {tie, {Turn, NewBoard}} ->
+	 					 	 PidPcom ! ok,
+	 					 	 {idsendUpdateManager, NodeP1} ! {node(), tie, P1, [GameId, P1, P2, Turn, NewBoard]},
+	 					 	 receive ok -> ok end,
+	 					 	 {idsendUpdateManager, NodeP2} ! {node(), tie, P2, [GameId, P1, P2, Turn, NewBoard]},
+						 	 receive ok -> ok end;
+                          error -> PidPcom ! error
                      end
             end,
 			gamesManager(GameList, GamesCounter)
     end.
+
+
 
 game(P1, P2, {Turn, Board}) ->
     receive
@@ -179,30 +202,67 @@ game(P1, P2, {Turn, Board}) ->
 						 	idgamesManager ! error,
 							game(P1, P2, {Turn, Board});
 					     NewBoard ->
-						 	idgamesManager ! {ok, {Turn, NewBoard}},
-							game(P1, P2, {Turn + 1, NewBoard})
+							case gameOver(NewBoard, Sym) of
+                            	continue ->
+									idgamesManager ! {continue, {Turn, NewBoard}},
+ 									game(P1, P2, {Turn + 1, NewBoard});
+								win ->
+									idgamesManager ! {continue, {Turn, NewBoard}, Player},
+									game(P1, P2, ?CleanBoard);
+                                tie -> idgamesManager ! {tie, {Turn, NewBoard}},
+									game(P1, P2, ?CleanBoard)
+                            end
+
                     end
 			end
     end.
 
 
+% determina si un jugador gano.
+win(Board,S) ->
+  case Board of
+    [S,S,S,_,_,_,_,_,_] -> true;
+    [_,_,_,S,S,S,_,_,_] -> true;
+    [_,_,_,_,_,_,S,S,S] -> true;
+    [S,_,_,_,S,_,_,_,S] -> true;
+    [_,_,S,_,S,_,S,_,_] -> true;
+    [_,_,S,_,_,S,_,_,S] -> true;
+    [S,_,_,S,_,_,S,_,_] -> true;
+    [_,S,_,_,S,_,_,S,_] -> true;
+    _                   -> false
+  end.
+
+% devulve el estado de desarrollo del juego.
+gameOver(Board, S) ->
+	case win(Board, S) of
+		 true -> win;
+	 	 false -> case lists:member(32, Board) of
+			           true -> continue;
+		               false -> tie
+				 end
+	end.
+
+% procesa una jugada.
 processPlay(Board, Sym, R, C) ->
 	if
 		((R > 0) and (R < 4) and (C > 0) and (C < 4)) ->
 			S = lists:nth(3*(R-1) + C,Board),
 	        if S == 32 ->
-				NewBoard = lists:sublist(Board, 3 * (R - 1) + C - 1)
+				lists:sublist(Board, 3 * (R - 1) + C - 1)
 				++ Sym ++ lists:nthtail(3*(R-1)+C,Board);
 				true -> error
 			end;
 		true -> error
 	end.
 
+% valida el turno de un jugador
 validateTurn(Player, P1, P2, Turn) ->
 	if Player == P1 andalso (Turn rem 2) == 0 -> "O";
 	   Player == P2 andalso (Turn rem 2) == 1 -> "X";
        true -> error
    end.
+
+
 % busca el nodo en el que esta el sendUpdate del usuario.
 sendUpdateManager() ->
     receive
