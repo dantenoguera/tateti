@@ -49,7 +49,11 @@ sendUpdate(Socket) ->
 			gen_tcp:send(Socket, "UPD 4 " ++ integer_to_list(GameId) ++ " "
 			++ " turno:" ++ integer_to_list(Turn)  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
 			++ prettyPrint(Board) ++ "\n"
-			++ " empate" ++ "\n")
+			++ " empate" ++ "\n");
+		{noGame, [GameId]} ->
+			gen_tcp:send(Socket, "UPD 5 " ++ integer_to_list(GameId) ++ " juego cerrado");
+		{left, [GameId, Player]} ->
+			gen_tcp:send(Socket, "UPD 6 " ++ integer_to_list(GameId) ++ Player ++ " abandona")
 	end,
 	sendUpdate(Socket).
 
@@ -84,6 +88,8 @@ psocket(Socket, PidSendUpd, User) ->
 		{pla, error, CmdId, GameId, leave} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ " " ++ "abandonar \n"), psocket(Socket, PidSendUpd, User);
 		{obs, ok, CmdId, GameId} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, PidSendUpd, User);
 		{obs, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, PidSendUpd, User);
+		{leave, ok, CmdId, GameId} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, PidSendUpd, User);
+		{leave, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERRor " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, PidSendUpd, User);
         invalid -> gen_tcp:send(Socket, "Comando invalido \n"), psocket(Socket, PidSendUpd, User)
     end.
 
@@ -132,7 +138,12 @@ pcomando(Cmd, PidPsocket, Node, User, PidSendUpd) ->
 				ok -> PidPsocket ! {obs, ok, CmdId, GameId};
 				error -> PidPsocket ! {obs, error, CmdId, GameId}
 			end;
-         ["LEA", CmdId] when User =/= unnamed -> ok;
+         ["LEA", CmdId, GameId] when User =/= unnamed ->
+			 idgamesManager ! {leave, self(), list_to_integer(GameId), User, PidSendUpd};
+		 	 receive
+				 ok -> PidPsocket ! {leave, ok, CmdId, GameId};
+				 error -> PidPsocket ! {leave, error, CmdId, GameId}
+			 end;
          ["BYE", CmdId] when User =/= unnamed -> ok;
          _ -> PidPsocket ! invalid
     end.
@@ -141,6 +152,11 @@ pcomando(Cmd, PidPsocket, Node, User, PidSendUpd) ->
 % gestiona los juegos.
 gamesManager(GameList, GamesCounter) ->
     receive
+		{updateObs, {Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, State}, User, PidSendUpd} ->
+			gamesManager([{Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, [{User, PidSendUpd} | Observers] , State} | lists:delete({Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers , State}, GameList)], GamesCounter);
+		{delete, {Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"}} ->
+			exit(PidGame, kill),
+			gamesManager(lists:delete({Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"}, GameList), GamesCounter);
         {updateGame, GameId} ->
             {Node, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Obs, _} = findGame(GameList, GameId),
             gamesManager([{Node, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Obs, "en curso"} |
@@ -148,13 +164,19 @@ gamesManager(GameList, GamesCounter) ->
             GamesCounter);
         {localGames, PidglobGames} ->
             PidglobGames ! GameList, gamesManager(GameList, GamesCounter);
-        {localCount, PidglobCount, Upd} ->
+        {localCount, PidglobCount} ->
             PidglobCount ! GamesCounter, gamesManager(GameList, GamesCounter);
         {newgame, PidPcom, User, Upd} ->
             PidGame = spawn(?MODULE, game, [User, unnamed, ?CleanBoard]),
             PidPcom ! ok,
             gamesManager([{node(), PidGame, globalCounter(GamesCounter), {User, Upd}, {null, null}, [], "en espera de contrincante"} | GameList], GamesCounter + 1);
         {listgames, PidPcom} -> PidPcom ! globalGames(GameList),  gamesManager(GameList, GamesCounter);
+		{leave, self(), list_to_integer(GameId), User, PidSendUpd} ->;
+			GamesObserved = [{Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, State} |
+			                {Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, State} <- globalGames(GameList),
+							lists:member({User, PidSendUpd}, Observers)],
+			% !!!!!!!!!!!!!!!
+
         {accept, PidPcom, User, UpdP2, GameId} ->
             case findGame(globalGames(GameList), GameId) of
                  error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
@@ -172,43 +194,83 @@ gamesManager(GameList, GamesCounter) ->
                  error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
 			 	 {Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, State} ->
 					 PidPcom ! ok,
-					 gamesManager([{Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, [{User, PidSendUpd} | Observers] , "en espera de contrincante"} | GameList], GamesCounter)
+					 case node() == Node of
+						 true ->
+					 	 	gamesManager([{Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, [{User, PidSendUpd} | Observers] , State} | lists:delete({Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers , State}, GameList)], GamesCounter);
+						false ->
+							{idgamesManager, Node} !  {updateObs, {Node,PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, State}, User, PidSendUpd},
+							gamesManager(GameList, GamesCounter)
+					end
 		    end;
         {play, PidPcom, GameId, Player, R, C} ->
             case findGame(globalGames(GameList), GameId) of
                  error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
+			 	 {_, _, _, {_, _}, {null, null}, _, _} -> PidPcom ! error;
                  {_, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, _} ->
                      PidGame ! {play, node(), Player, list_to_integer(R), list_to_integer(C)},
                      receive
                          {continue, {Turn, NewBoard}} ->
 							 PidPcom ! ok,
-                             sendToUsers(UpdP1, UpdP2, element(2, lists:unzip(Observers)), {continue , [GameId, P1, P2, Turn, NewBoard]});
+                             sendToUsers([UpdP1, UpdP2 | element(2, lists:unzip(Observers))], {continue , [GameId, P1, P2, Turn, NewBoard]});
 						 {win, {Turn, NewBoard}, Winner} ->
 							 PidPcom ! ok,
-							 sendToUsers(UpdP1, UpdP2, element(2, lists:unzip(Observers)), {win, [GameId, P1, P2, Turn, NewBoard, Winner]});
+							 sendToUsers([UpdP1, UpdP2 | element(2, lists:unzip(Observers))], {win, [GameId, P1, P2, Turn, NewBoard, Winner]});
 						 {tie, {Turn, NewBoard}} ->
                              PidPcom ! ok,
-						 	 sendToUsers(UpdP1, UpdP2, element(2, lists:unzip(Observers)), {tie, [GameId, P1, P2, Turn, NewBoard]});
+						 	 sendToUsers([UpdP1, UpdP2 | element(2, lists:unzip(Observers))], {tie, [GameId, P1, P2, Turn, NewBoard]});
                           error -> PidPcom ! error
                      end
             end, gamesManager(GameList, GamesCounter);
 		{abandon, PidPcom, GameId, User} ->
 	    	case findGame(globalGames(GameList), GameId) of
-				 error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
-			 	  {_, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, _} ->
-					  
+				  error -> PidPcom ! error, gamesManager(GameList, GamesCounter);
+			 	  {Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"} when User == P1->
+					  PidPcom ! ok,
+					  sendToUsers([UpdP1 | Observers], {noGame, [GameId]}),
+					  if
+						  node() == Node ->
+						      exit(PidGame, kill),
+							  gamesManager(lists:delete({Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"}, GameList), GamesCounter);
+						  true ->
+						  	  {idgamesManager, Node} ! {delete, {Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"}},
+							  gamesManager(GameList, GamesCounter)
+                      end;
+				 {Node, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, "en curso"} ->
+					 case node() == Node of
+						 true when User == P1 ->
+							 PidPcom ! ok,
+						     PidGame ! {left, 1},
+						     gamesManager([{Node, PidGame, GameId, {P2, UpdP2}, {null, null}, Observers, "en espera de contrincante"} | lists:delete({Node, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, "en curso"}, GameList)], GamesCounter);
+						 true when User == P2 ->
+							 PidPcom ! ok,
+							 PidGame ! {left, 2},
+							 gamesManager([{Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"} | lists:delete({Node, PidGame, GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, "en curso"}, GameList)], GamesCounter);
+						 false when User == P1 ->
+							 PidPcom ! ok,
+							 PidGame ! {left, 1},
+							 {idgamesManager, Node} ! {delete, {Node, PidGame, GameId, {P2, UpdP2}, {null, null}, Observers, "en espera de contrincante"}},
+							 gamesManager(GameList, GamesCounter);
+						 false when User == P2 ->
+							 PidPcom ! ok,
+							 PidGame ! {left, 2},
+							 {idgamesManager, Node} ! {delete, {Node, PidGame, GameId, {P1, UpdP1}, {null, null}, Observers, "en espera de contrincante"}},
+							 gamesManager(GameList, GamesCounter);
+						 _ -> PidPcom ! error
+					 end,
+					 sendToUsers([UpdP1, UpdP2, Observers], {left, [GameId, User]});
+				 _ -> PidPcom ! error, gamesManager(GameList, GamesCounter)
 			end
     end.
 
-
-sendToUsers(UpdP1, UpdP2, Observers, Data) ->
-	UpdP1 ! Data,
-	UpdP2 ! Data,
-	lists:foreach(fun(Obs) -> Obs ! Data end, Observers).
+sendToUsers(Users, Data) ->
+	lists:foreach(fun(Usr) -> Usr ! Data end, Users).
 
 game(P1, P2, {Turn, Board}) ->
     receive
-        {join, Player} -> game(P1, Player, {Turn, Board});
+		{join, Player} when P2 == unnamed -> game(P1, Player, {Turn, Board});
+        {join, Player} when P1 == unnamed -> game(Player, P2, {Turn, Board});
+		{left, 1} -> game(unnamed, P2, {Turn, Board});
+		{left, 2} -> game(P1, unnamed, {Turn, Board});
         {play, Node, Player, R, C} ->
 			case validateTurn(Player, P1, P2, Turn) of
 				 error ->

@@ -34,3 +34,6 @@ c(tp), tp:init(8001).
 
  
 CON: un usuario se registra una única vez. Un usuario no registrado solo puede listar juegos
+
+hacer que el observador deje de observar cuando acepta una partida.
+rtas del usuario ante update.
