@@ -31,35 +31,56 @@ dispatcher(ListenSocket) ->
     end,
     dispatcher(ListenSocket).
 
-
 % envia mensajes de actualizacion al cliente.
 sendUpdate(Socket) ->
 	receive
 		{playerJoined, [GameId, Player]} ->
 			gen_tcp:send(Socket, "UPD 1 " ++ integer_to_list(GameId) ++ " "
-			++ Player ++ " " ++ "se unio al juego \n");
+			++ Player ++ " " ++ "se unio al juego \n"),
+			receive
+				{rp, 1, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
 		{continue, [GameId, P1, P2, Turn, Board]} ->
 			gen_tcp:send(Socket, "UPD 2 " ++ integer_to_list(GameId)
 			++ " turno:" ++ integer_to_list(Turn)  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
-			++ prettyPrint(Board) ++ "\n");
+			++ prettyPrint(Board) ++ "\n"),
+			receive
+				{rp, 2, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
 		{win, [GameId, P1, P2, Turn, Board, Winner]} ->
 			gen_tcp:send(Socket, "UPD 3 " ++ integer_to_list(GameId) ++ " "
 			++ " turno:" ++ integer_to_list(Turn)  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
 			++ prettyPrint(Board) ++ "\n"
-			++ "gana " ++ Winner ++ "\n");
+			++ "gana " ++ Winner ++ "\n"),
+			receive
+				{rp, 3, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
 		{tie, [GameId, P1, P2, Turn, Board]} ->
 			gen_tcp:send(Socket, "UPD 4 " ++ integer_to_list(GameId) ++ " "
 			++ " turno:" ++ integer_to_list(Turn)  ++ " " ++ P1 ++ " vs " ++ P2 ++ "\n"
 			++ prettyPrint(Board) ++ "\n"
-			++ " empate" ++ "\n");
+			++ " empate" ++ "\n"),
+			receive
+				{rp, 4, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
 		{noGame, [GameId]} ->
-			gen_tcp:send(Socket, "UPD 5 " ++ integer_to_list(GameId) ++ " juego cerrado \n");
+			gen_tcp:send(Socket, "UPD 5 " ++ integer_to_list(GameId) ++ " juego cerrado \n"),
+			receive
+				{rp, 5, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
 		{abandon, [GameId, Player]} ->
-			gen_tcp:send(Socket, "UPD 6 " ++ integer_to_list(GameId) ++ " " ++ Player ++ " abandona \n");
-		die -> exit(kill)
-	end,
-	receive
-		{rp, CmdId} -> ok
+			gen_tcp:send(Socket, "UPD 6 " ++ integer_to_list(GameId) ++ " " ++ Player ++ " abandona \n"),
+			receive
+				{rp, 6, Pcom} -> Pcom ! ok;
+				{rp, _, Pcom} -> Pcom ! error
+			end;
+		die -> exit(kill);
+		_ -> ok
 	end,
 	sendUpdate(Socket).
 
@@ -70,15 +91,17 @@ psocket(Socket, Upd, User) ->
             idpbalance ! {self(), where},
             receive
                 {Node, _} ->
-                    spawn(Node, ?MODULE, pcomando, [binary_to_list(Cmd), self(), node(), User, Upd]),
+					ParsedCmd = string:tokens(string:strip(string:strip(binary_to_list(Cmd), right, $\n),right,$\r), " "),
+                    spawn(Node, ?MODULE, pcomando, [ParsedCmd, self(), node(), User, Upd]),
                     io:format("pcomando se crea en ~p ~n",[Node])
             end;
         {error, closed} ->
-            io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket])
+            io:format("Error en el cliente ~p. Conexion cerrada.~n", [Socket]),
+			exit(kill)
     end,
     receive
         {con, ok, CmdId, UserName} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ UserName ++ "\n"), psocket(Socket, Upd, UserName);
-        {con, error, CmdId, UserName} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ UserName ++ "\n"), psocket(Socket, Upd, null);
+        {con, error, CmdId, UserName} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ UserName ++ "\n"), psocket(Socket, Upd, User);
         {lsg, ok, CmdId, GameList} -> A = io_lib:format("~p ~n",[GameList]), lists:flatten(A),
                                       gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ "Juegos \n" ++ A),
                                       psocket(Socket, Upd, User);
@@ -92,14 +115,16 @@ psocket(Socket, Upd, User) ->
 		{obs, ok, CmdId, GameId} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, Upd, User);
 		{obs, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, Upd, User);
 		{leave, ok, CmdId, GameId} -> gen_tcp:send(Socket, "OK " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, Upd, User);
-		{leave, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERRor " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, Upd, User);
+		{leave, error, CmdId, GameId} -> gen_tcp:send(Socket, "ERROR " ++ CmdId ++ " " ++ GameId ++ "\n"), psocket(Socket, Upd, User);
+		{rp, ok} -> psocket(Socket, Upd, User);
+		{rp, error, CmdId} -> gen_tcp:send(Socket, "ERROR UPD " ++ CmdId ++ "\n"), psocket(Socket, Upd, User);
         invalid -> gen_tcp:send(Socket, "Comando invalido \n"), psocket(Socket, Upd, User);
 		die -> gen_tcp:close(Socket), exit(kill)
     end.
 
 
 pcomando(Cmd, Psocket, Node, User, Upd) ->
-    case string:tokens(string:strip(string:strip(Cmd, right, $\n),right,$\r), " ") of
+    case Cmd of
          ["CON", CmdId, UserName] when User == null ->
 			 {idusersManager, Node} ! {UserName, Upd, self()},
 			 receive
@@ -153,7 +178,12 @@ pcomando(Cmd, Psocket, Node, User, Upd) ->
              {idusersManager, Node} ! {delete, User, Upd},
              Upd ! die,
 			 Psocket ! die;
-		 ["OK", CmdId] -> Upd ! {rp, CmdId};
+		 ["OK", CmdId] ->
+		 	Upd ! {rp, list_to_integer(CmdId), self()},
+			receive
+				ok -> Psocket ! {rp, ok};
+				error -> Psocket ! {rp, error, CmdId}
+			end;
          _ -> Psocket ! invalid
     end.
 
@@ -181,7 +211,14 @@ gamesManager(GameList, GamesCounter) ->
 					Pcom ! ok,
 					gamesManager(GameList, GamesCounter)
 			end;
-		{bye, User, Upd} -> lists:foreach(fun({_, PidGame, _}) -> PidGame ! {bye, User, Upd} end, globalGames(GameList));
+		{bye, User, Upd} -> lists:foreach(fun({GameId, PidGame, _}) ->
+			PidGame ! {bye, User, Upd, node()},
+			receive
+				ok -> ok;
+				{ok, delete, Node} ->
+				  {idgamesManager, Node} ! {delete, GameId, PidGame}
+		  	end
+		  end, globalGames(GameList));
         {accept, Pcom, User, Upd, GameId} ->
             case findGame(globalGames(GameList), GameId) of
                  error -> Pcom ! error, gamesManager(GameList, GamesCounter);
@@ -246,7 +283,7 @@ game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board}) ->
 			{idgamesManager, Node} ! ok,
 			sendToUsers([UpdP2 | element(2, lists:unzip(Observers))], {playerJoined , [GameId, Player]}),
 			game(GameId, {Player, Upd}, {P2, UpdP2}, Observers, {Turn, Board});
-		{join, Node, _}  ->
+		{join, Node, _, _}  ->
 			{idgamesManager, Node} ! error,
 			game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board});
 		{obs, User, Upd} ->
@@ -266,10 +303,21 @@ game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board}) ->
 			sendToUsers(element(2, lists:unzip(Observers)), {noGame , [GameId]}),
 			exit(kill);
 		{abandon, Node, _} -> {idgamesManager, Node} ! error;
-		{bye, User, Upd} when User == P1 ->
-			game(GameId, {null, null}, {P2, UpdP2}, lists:delete({User, Upd}, Observers), {Turn, Board});
-		{bye, User, Upd} when User == P2 ->
-			game(GameId, {P1, UpdP1}, {null, null}, lists:delete({User, Upd}, Observers), {Turn, Board});
+		{bye, User, Upd, Node} when User == P1 andalso P2 =/= null ->
+			NewObservers = lists:delete({User, Upd}, Observers),
+			sendToUsers([UpdP2 | element(2, lists:unzip(NewObservers))], {abandon , [GameId, User]}),
+			{idgamesManager, Node} ! ok,
+			game(GameId, {null, null}, {P2, UpdP2}, NewObservers, ?CleanBoard);
+		{bye, User, Upd, Node} when User == P2 andalso P1 =/= null ->
+			NewObservers = lists:delete({User, Upd}, Observers),
+			sendToUsers([UpdP1 | element(2, lists:unzip(NewObservers))], {abandon , [GameId, User]}),
+			{idgamesManager, Node} ! ok,
+			game(GameId, {P1, UpdP1}, {null, null}, NewObservers, ?CleanBoard);
+		{bye, User, Upd, Node} when User == P1 orelse User == P2 ->
+			{idgamesManager, Node} ! {ok, delete, node()},
+			NewObservers = lists:delete({User, Upd}, Observers),
+			sendToUsers([UpdP1 | element(2, lists:unzip(NewObservers))], {noGame , [GameId]}),
+			exit(kill);
         {play, Node, Player, R, C} when P1 =/= null andalso P2 =/= null ->
 			case validateTurn(Player, P1, P2, Turn) of
 				 error ->
@@ -282,7 +330,7 @@ game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board}) ->
 							game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board});
 					     NewBoard ->
 							{idgamesManager, Node} ! ok,
-							case gameOver(NewBoard, Sym) of
+							case gameOver(NewBoard, hd(Sym)) of
                             	continue ->
 									sendToUsers([UpdP1, UpdP2 | element(2, lists:unzip(Observers))], {continue , [GameId, P1, P2, Turn, NewBoard]}),
  									game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn + 1, NewBoard});
