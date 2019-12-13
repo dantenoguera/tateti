@@ -192,7 +192,7 @@ pcomando(Cmd, Psocket, Node, User, Upd) ->
 gamesManager(GameList, GamesCounter) ->
     receive
 		{delete, GameId, PidGame} ->
-			gamesManager(lists:delete({GameId, PidGame, "en espera de contrincante"}, GameList), GamesCounter);
+			gamesManager(lists:delete({GameId, PidGame}, GameList), GamesCounter);
         {localGames, GlobGames} ->
             GlobGames ! GameList, gamesManager(GameList, GamesCounter);
         {localCount, GlobCount} ->
@@ -218,7 +218,8 @@ gamesManager(GameList, GamesCounter) ->
 				{ok, delete, Node} ->
 				  {idgamesManager, Node} ! {delete, GameId, PidGame}
 		  	end
-		  end, globalGames(GameList));
+		end, globalGames(GameList)),
+		gamesManager(GameList, GamesCounter);
         {accept, Pcom, User, Upd, GameId} ->
             case findGame(globalGames(GameList), GameId) of
                  error -> Pcom ! error, gamesManager(GameList, GamesCounter);
@@ -316,7 +317,7 @@ game(GameId, {P1, UpdP1}, {P2, UpdP2}, Observers, {Turn, Board}) ->
 		{bye, User, Upd, Node} when User == P1 orelse User == P2 ->
 			{idgamesManager, Node} ! {ok, delete, node()},
 			NewObservers = lists:delete({User, Upd}, Observers),
-			sendToUsers([UpdP1 | element(2, lists:unzip(NewObservers))], {noGame , [GameId]}),
+			sendToUsers(element(2, lists:unzip(NewObservers)), {noGame , [GameId]}),
 			exit(kill);
         {play, Node, Player, R, C} when P1 =/= null andalso P2 =/= null ->
 			case validateTurn(Player, P1, P2, Turn) of
@@ -447,7 +448,7 @@ usersManager(UsersList) ->
         {localUsers, Pid} -> Pid ! UsersList, usersManager(UsersList);
         {globalUsers, Pid} -> Pid ! globalUsers(UsersList), usersManager(UsersList);
 		{delete, User, Upd} ->
-			globalUsers(lists:delete({User, Upd}, UsersList));
+			usersManager(lists:delete({User, Upd}, UsersList));
         {UserName, Upd, Pcom} ->
             case [Name || {Name, _} <- globalUsers(UsersList), Name == UserName] of
 				 [] -> Pcom ! ok, usersManager([{UserName, Upd} | UsersList]);
