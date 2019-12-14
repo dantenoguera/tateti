@@ -22,20 +22,23 @@ será bloqueado.
 * Una partida se puede abandonar en cualquier momento, la misma se resetea.
 * Un usuario no puede observar más de una vez una partida.
 * Un jugador no puede observar la partida en la que juega.
-* Cuando un jugador abandona la partida, y queda otro jugador, esta se reseta y además
-el jugador que queda mantiene su número de jugador (jugador 1 o jugador 2). Si ambos
+* Cuando un jugador abandona la partida, y queda otro jugador, esta se reseta. Si ambos
 abandonan la partida es destruída.
 
 ## Para probar el servidor
-1 Crear un nodo: erl -name name@ip.
-2 Compilar el archivo server.erl: c(server).
-3 Correr la función init: tp:init(Port, Node) donde Node es el nombre de un nodo al
+1. Crear un nodo: erl -name name@ip.
+2. Compilar el archivo server.erl: c(server).
+3. Correr la función init: tp:init(Port, Node) donde Node es el nombre de un nodo al
 que se quiera conectar.
-4 Conectar a los servidores con telnet para hacer de cliente.
-Ejemplo: 
-erl -name nA@127.0.0.1
-erl -name nB@127.0.0.1
-En nA: c(server), server:init(8000, 'nB@127.0.0.1').
-En nB: c(server), server:init(8080, 'nA@127.0.0.1').
-telnet localhost 8000 (cliente de nA). 
-telnet localhost 8080 (cliente de nB).
+4. Conectar a los servidores con telnet para hacer de cliente.
+
+
+
+Ejemplo:
+
+1. erl -name nA@127.0.0.1
+2. erl -name nB@127.0.0.1
+3. En nA: c(server), server:init(8000, 'nB@127.0.0.1').
+4. En nB: c(server), server:init(8080, 'nA@127.0.0.1').
+5. telnet localhost 8000 (cliente de nA). 
+6. telnet localhost 8080 (cliente de nB).
